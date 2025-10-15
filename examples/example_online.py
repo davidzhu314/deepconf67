@@ -275,6 +275,14 @@ def main():
                        help='Tensor parallel size for model')
     parser.add_argument('--no_multiple_voting', action='store_true',
                        help='Disable multiple voting analysis')
+    parser.add_argument('--adaptive_threshold', action='store_true',
+                       help='Adaptive threshold or not')
+    parser.add_argument('--adaptive_interval', type=int, default=2048,
+                       help='Interval for adaptive threshold adjustment')
+    parser.add_argument('--threshold_adjustment_factor', type=float, default=0.15,
+                       help='Threshold adjustment factor')
+    parser.add_argument('--smoothing_alpha', type=float, default=0.3,
+                       help='EMA smoothing alpha for confidence')
     
     args = parser.parse_args()
     
@@ -320,7 +328,11 @@ def main():
         confidence_percentile=args.confidence_percentile,
         window_size=args.window_size,
         compute_multiple_voting=not args.no_multiple_voting,
-        sampling_params=sampling_params
+        sampling_params=sampling_params,
+        adaptive_threshold=args.adaptive_threshold,  # Enable adaptive thresholds
+        adaptive_interval=args.adaptive_interval,  # Adjust every 500 tokens
+        threshold_adjustment_factor=0.15,  # 15% adjustment magnitude
+        smoothing_alpha=0.3,  # EMA smoothing
     )
     
     # Evaluate results against ground truth

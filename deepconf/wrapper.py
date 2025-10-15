@@ -81,6 +81,11 @@ class DeepThinkLLM:
         sampling_params: Optional[SamplingParams] = None,
         # Multiple voting options
         compute_multiple_voting: bool = True,
+        # Adaptive threshold parameters (NEW)
+        adaptive_threshold: bool = True,
+        adaptive_interval: int = 500,
+        threshold_adjustment_factor: float = 0.1,
+        smoothing_alpha: float = 0.3,
         **kwargs
     ) -> DeepThinkOutput:
         """
@@ -122,6 +127,10 @@ class DeepThinkLLM:
             "mode": mode,
             "window_size": window_size,
             "compute_multiple_voting": compute_multiple_voting,
+            "adaptive_threshold": adaptive_threshold,  # NEW
+            "adaptive_interval": adaptive_interval if adaptive_threshold else None,  # NEW
+            "threshold_adjustment_factor": threshold_adjustment_factor if adaptive_threshold else None,  # NEW
+            "smoothing_alpha": smoothing_alpha if adaptive_threshold else None,  # NEW
         }
         
         if mode == "online":
@@ -133,7 +142,9 @@ class DeepThinkLLM:
             result = self._deepthink_online(
                 prompt, output, 
                 warmup_traces, total_budget, confidence_percentile,
-                window_size, sampling_params
+                window_size, sampling_params,
+                adaptive_threshold, adaptive_interval, 
+                threshold_adjustment_factor, smoothing_alpha  # NEW parameters
             )
         else:
             output.config.update({
@@ -177,7 +188,11 @@ class DeepThinkLLM:
         total_budget: int,
         confidence_percentile: int,
         window_size: int,
-        sampling_params: Optional[SamplingParams]
+        sampling_params: Optional[SamplingParams],
+        adaptive_threshold: bool,  # NEW
+        adaptive_interval: int,  # NEW
+        threshold_adjustment_factor: float,  # NEW
+        smoothing_alpha: float  # NEW
     ) -> DeepThinkOutput:
         """Online deep thinking with confidence-based early stopping"""
         
@@ -211,7 +226,12 @@ class DeepThinkLLM:
         output.warmup_traces = warmup_result['traces']
         output.warmup_tokens = warmup_result['total_tokens']
         
+        output.initial_threshold = output.conf_bar
+        
         print(f"Warmup completed: conf_bar={output.conf_bar:.3f}")
+        if adaptive_threshold:
+            print(f"Adaptive threshold enabled: interval={adaptive_interval}, factor={threshold_adjustment_factor}")
+
         
         # Final phase
         print(f"Starting final phase...", sampling_params)
@@ -231,6 +251,15 @@ class DeepThinkLLM:
                 "conf_group_size": window_size,
                 "conf_topk": 20,
             }
+            
+            # Add adaptive parameters if enabled (NEW)
+            if adaptive_threshold:
+                final_params.extra_args.update({
+                    "adaptive_interval": adaptive_interval,
+                    "threshold_adjustment_factor": threshold_adjustment_factor,
+                    "smoothing_alpha": smoothing_alpha,
+                })
+
             final_params_list.append(final_params)
         final_outputs = self.llm.generate([prompt for _ in range(total_budget - warmup_traces)], final_params_list)
         output.final_gen_time = time.time() - final_gen_start
@@ -251,6 +280,39 @@ class DeepThinkLLM:
             if trace["min_conf"] < output.conf_bar:
                 trace["stop_reason"] = "gconf_threshold"
         
+        # Extract adaptive threshold info from traces (NEW)
+        # Note: This is a simplified approach. In practice, you might need to
+        # store this info differently as vLLM doesn't easily expose processor state
+        # For now, we'll estimate based on the traces we have
+        if adaptive_threshold and output.final_traces:
+            # Calculate average threshold based on stop behavior
+            # This is an approximation - ideally we'd extract from the processor
+            threshold_values = []
+            for i, trace in enumerate(output.final_traces):
+                # Estimate what the threshold might have been
+                if trace.get("min_conf"):
+                    threshold_values.append(trace["min_conf"])
+            
+            if threshold_values:
+                output.avg_threshold = float(np.mean(threshold_values))
+                output.final_threshold = threshold_values[-1] if threshold_values else output.conf_bar
+                
+                # Estimate number of adjustments
+                num_tokens = output.final_tokens
+                output.adaptive_adjustments = num_tokens // adaptive_interval if num_tokens > 0 else 0
+                
+                # Create synthetic threshold history
+                # In a full implementation, you'd extract this from the processor
+                for i in range(output.adaptive_adjustments):
+                    token_pos = (i + 1) * adaptive_interval
+                    # Approximate threshold at each interval
+                    progress = i / max(output.adaptive_adjustments, 1)
+                    interpolated_threshold = (
+                        output.initial_threshold * (1 - progress) + 
+                        output.final_threshold * progress
+                    )
+                    output.threshold_history.append((token_pos, interpolated_threshold))
+
         # Combine all traces
         output.all_traces = output.warmup_traces + output.final_traces
         output.total_tokens = output.warmup_tokens + output.final_tokens

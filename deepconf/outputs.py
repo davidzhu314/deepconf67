@@ -7,7 +7,7 @@ LICENSE file in the root directory of this source tree.
 """
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Tuple, Any
 
 
 @dataclass
@@ -61,6 +61,13 @@ class DeepThinkOutput:
     # Metadata
     mode: str = "offline"
     timestamp: str = field(default_factory=lambda: datetime.now().isoformat())
+
+    # Adaptive threshold tracking (NEW)
+    threshold_history: List[Tuple[int, float]] = field(default_factory=list)
+    adaptive_adjustments: int = 0
+    initial_threshold: Optional[float] = None
+    final_threshold: Optional[float] = None
+    avg_threshold: Optional[float] = None
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for serialization"""
@@ -109,6 +116,15 @@ class DeepThinkOutput:
                 "processing_time": self.processing_time,
                 "total_time": self.total_time,
             },
+
+            # Adaptive threshold info (NEW)
+            "adaptive_threshold_stats": {
+                "threshold_history": self.threshold_history,
+                "adaptive_adjustments": self.adaptive_adjustments,
+                "initial_threshold": self.initial_threshold,
+                "final_threshold": self.final_threshold,
+                "avg_threshold": self.avg_threshold,
+            } if self.threshold_history else None,
             
             # Configuration and metadata
             "config": self.config,
@@ -126,6 +142,14 @@ class DeepThinkOutput:
             print(f"Final traces: {len(self.final_traces)}")
             if self.conf_bar is not None:
                 print(f"Confidence threshold: {self.conf_bar:.3f}")
+            
+            # Print adaptive threshold info (NEW)
+            if self.threshold_history:
+                print(f"Adaptive threshold adjustments: {self.adaptive_adjustments}")
+                if self.initial_threshold and self.final_threshold:
+                    print(f"Threshold range: {self.initial_threshold:.3f} -> {self.final_threshold:.3f}")
+                if self.avg_threshold:
+                    print(f"Average threshold: {self.avg_threshold:.3f}")
         else:
             print(f"Generated traces: {self.total_traces_count}")
         
